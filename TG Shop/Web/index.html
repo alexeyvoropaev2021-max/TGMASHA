@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Telegram Shop</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body { font-family: system-ui, Arial; margin: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    button { padding: 10px 12px; border-radius: 10px; border: 1px solid #bbb; background: #fff; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .muted { color:#666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>🛍 Магазин</h2>
+  <div class="muted" id="who"></div>
+
+  <div id="list"></div>
+
+  <h3>Корзина</h3>
+  <div id="cart" class="muted">Пусто</div>
+  <div class="row" style="margin-top:12px;">
+    <div><b id="total">0 ₽</b></div>
+    <button id="orderBtn">Оформить</button>
+  </div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.expand();
+    const u = tg.initDataUnsafe?.user;
+    document.getElementById("who").textContent =
+      u ? `Вы: ${u.first_name} (id ${u.id})` : "Открыто вне Telegram (для теста подпись не пройдёт)";
+  }
+
+  const cart = new Map(); // productId -> qty
+  let products = [];
+
+  function renderCart() {
+    const cartDiv = document.getElementById("cart");
+    const totalDiv = document.getElementById("total");
+    if (cart.size === 0) {
+      cartDiv.textContent = "Пусто";
+      totalDiv.textContent = "0 ₽";
+      return;
+    }
+    let total = 0;
+    const lines = [];
+    for (const [id, qty] of cart.entries()) {
+      const p = products.find(x => x.id === id);
+      const cost = p.price * qty;
+      total += cost;
+      lines.push(`${p.name} × ${qty} = ${cost} ₽`);
+    }
+    cartDiv.innerHTML = lines.map(x => `<div>${x}</div>`).join("");
+    totalDiv.textContent = `${total} ₽`;
+  }
+
+  function renderProducts() {
+    const list = document.getElementById("list");
+    list.innerHTML = products.map(p => `
+      <div class="card">
+        <div class="row">
+          <div>
+            <div><b>${p.name}</b></div>
+            <div class="muted">${p.price} ₽</div>
+          </div>
+          <div class="row">
+            <button onclick="dec('${p.id}')">-</button>
+            <div id="qty-${p.id}">0</div>
+            <button onclick="inc('${p.id}')">+</button>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  window.inc = (id) => {
+    cart.set(id, (cart.get(id) || 0) + 1);
+    document.getElementById(`qty-${id}`).textContent = cart.get(id);
+    renderCart();
+  }
+  window.dec = (id) => {
+    const q = (cart.get(id) || 0) - 1;
+    if (q <= 0) cart.delete(id); else cart.set(id, q);
+    document.getElementById(`qty-${id}`).textContent = cart.get(id) || 0;
+    renderCart();
+  }
+
+  async function loadProducts() {
+    const res = await fetch("/api/products");
+    products = await res.json();
+    renderProducts();
+  }
+
+  document.getElementById("orderBtn").addEventListener("click", async () => {
+    if (!tg) { alert("Открой внутри Telegram, иначе initData невалиден."); return; }
+    if (cart.size === 0) { alert("Корзина пуста"); return; }
+
+    const items = Array.from(cart.entries()).map(([id, qty]) => ({id, qty}));
+    const body = { initData: tg.initData, items };
+
+    const res = await fetch("/api/order", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    if (!res.ok) { alert("Ошибка: " + (data.detail || res.status)); return; }
+
+    alert("Заказ оформлен! Итого: " + data.total + " ₽");
+    cart.clear();
+    products.forEach(p => document.getElementById(`qty-${p.id}`).textContent = 0);
+    renderCart();
+    tg.close(); // по желанию
+  });
+
+  loadProducts();
+</script>
+</body>
+</html>
